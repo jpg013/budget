@@ -1,3 +1,30 @@
+
+drop table csv_column_mappings;
+
+drop table csv_file_configurations;
+
+create table csv_file_configurations(
+  id serial PRIMARY KEY,
+  name varchar not null unique,
+  file_pattern varchar not null,
+  created_at TIMESTAMP WITH TIME ZONE not null,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  deleted_at TIMESTAMP WITH TIME ZONE default null,
+)
+
+create table csv_column_mappings(
+  id serial PRIMARY KEY,
+  name varchar not null,
+  ordinal int not null,
+  type varchar not null,
+  args jsonb not null default '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE not null,
+  updated_at TIMESTAMP WITH TIME ZONE,
+  deleted_at TIMESTAMP WITH TIME ZONE default null,
+  file_configuration_id int not null,
+  FOREIGN KEY (file_configuration_id) REFERENCES csv_file_configurations (id)
+)
+
 CREATE TABLE activity_sources(
    id serial PRIMARY KEY,
    name VARCHAR (255) UNIQUE NOT null,

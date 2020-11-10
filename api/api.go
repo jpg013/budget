@@ -1,21 +1,17 @@
 package api
 
 import (
-	"strconv"
-
-	"github.com/jpg013/budget"
-	"github.com/jpg013/budget/models"
 
 	// Importing go sql driver
 
-	"encoding/csv"
 	"fmt"
-	"log"
 	"os"
-	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
+	"github.com/jpg013/budget"
 	"github.com/jpg013/budget/config"
+	"github.com/jpg013/budget/csv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -37,67 +33,43 @@ func makePostgresDSN(cfg config.Configuration) string {
 	)
 }
 
-func ParseActivityFile(file string) []*models.Activity {
-	// path := fmt.Sprintf("%s-%d-YearToDateSummary.csv", source, year)
-	f, err := os.Open(file)
+func DefineDiscoverAllAvailableCSV(db *gorm.DB) {
+	// config := &csv.FileConfiguration{
+	// 	Name:        "Discover All Available",
+	// 	FilePattern: "Discover-AllAvailable-[0-9]+.csv",
+	// 	ColumnMappings: []*csv.ColumnMapping{
+	// 		&csv.ColumnMapping{
+	// 			Name:    "Transaction Date",
+	// 			Ordinal: 1,
+	// 			Type:    "timestamp",
+	// 			Args:    map[string]interface{}{"timestamp_format": "01-02-2006"},
+	// 		},
+	// 		&csv.ColumnMapping{
+	// 			Name:    "Posted Date",
+	// 			Ordinal: 2,
+	// 			Type:    "timestamp",
+	// 			Args:    map[string]interface{}{"timestamp_format": "01-02-2006"},
+	// 		},
+	// 		&csv.ColumnMapping{
+	// 			Name:    "Description",
+	// 			Ordinal: 3,
+	// 			Type:    "string",
+	// 		},
+	// 		&csv.ColumnMapping{
+	// 			Name:    "Amount",
+	// 			Ordinal: 4,
+	// 			Type:    "float64",
+	// 		},
+	// 		&csv.ColumnMapping{
+	// 			Name:    "Category",
+	// 			Ordinal: 5,
+	// 			Type:    "string",
+	// 		},
+	// 	},
+	// }
 
-	if err != nil {
-		log.Fatal("Unable to read input file ", err)
-	}
-
-	defer f.Close()
-
-	csvReader := csv.NewReader(f)
-	records, err := csvReader.ReadAll()
-
-	if err != nil {
-		log.Fatal("Unable to parse file as CSV", err)
-	}
-
-	// Remove the first record (these are the column names)
-	records = records[1:]
-	rowNum := 1
-	activityData := make([]*models.Activity, len(records))
-
-	for _, r := range records {
-		s := strings.Split(r[0], "/")
-		s1 := fmt.Sprintf("%s-%s-%s", s[2], s[0], s[1])
-		td, err := time.Parse("2006-01-02", s1)
-
-		if err != nil {
-			panic(err)
-		}
-
-		s = strings.Split(r[1], "/")
-		s1 = fmt.Sprintf("%s-%s-%s", s[2], s[0], s[1])
-		pd, err := time.Parse("2006-01-02", s1)
-
-		if err != nil {
-			panic(err)
-		}
-
-		amount, err := strconv.ParseFloat(r[3], 32)
-
-		if err != nil {
-			panic(err)
-		}
-
-		code := fmt.Sprintf("%s-%d", file)
-
-		activityData[rowNum-1] = &models.Activity{
-			TransactionDate: td,
-			PostedDate:      pd,
-			Description:     r[2],
-			Amount:          float32(amount),
-			Category:        r[4],
-			Code:            code,
-			SourceID:        1,
-		}
-
-		rowNum++
-	}
-
-	return activityData
+	// result := db.Create(&config)
+	// fmt.Println(result)
 }
 
 func Start(cfg config.Configuration) error {
@@ -108,40 +80,37 @@ func Start(cfg config.Configuration) error {
 		return err
 	}
 
-	activityProcessor := budget.NewActivityProcessor(db)
-
-	err = activityProcessor.Start()
+	fileWatcher := budget.NewFileWatcher()
+	csvManager, err := csv.NewManager(db)
 
 	if err != nil {
 		return err
 	}
 
-	time.Sleep(10 * time.Minute)
-	// path := fmt.Sprintf("%s-%d-YearToDateSummary.csv", "Discover", 2020)
-	// activities := ParseActivityFile("Discover", 2020)
-	// for _, a := range activities {
-	// 	result := db.Create(a)
-	// 	fmt.Println(result.Error)
-	// 	fmt.Println(result.RowsAffected)
-	// 	fmt.Println(a.ID)
-	// }
-	// var activity models.Activity
-	// db.First(&activity, "code = ?", "2020-01-01:1")
-	// fmt.Println(activity.ActivityID)
-	// activitySource := models.ActivitySource{Name: "Discover"}
-	// result := db.Create(&activitySource) // pass pointer of data to Create
-	// fmt.Println(result.Error)
-	// fmt.Println(result.RowsAffected)
-	// fmt.Println(activitySource.ID)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// logger := logging.NewLogger().WithTransports(
-	// 	logging.NewStdOutTransport(logging.StdOutTransportConfig{Level: logging.InfoLevel}),
-	// )
-	// e := server.New(cfg, logger)
-	// transport.NewHTTP(user.Initialize(db, cfg), e.Group("/user"))
-	// server.Start(e, cfg)
+	go func() {
+		err := fileWatcher.WatchDirs("./tmp")
 
+		if err != nil {
+			panic(err)
+		}
+
+		for {
+			evt := <-fileWatcher.Data
+
+			if evt.Op == fsnotify.Create {
+				records, err := csvManager.ParseFile(evt.Name)
+
+				if err != nil {
+					fmt.Println(err)
+				} else {
+					fmt.Println(records)
+				}
+			}
+		}
+	}()
+
+	fmt.Println(csvManager)
+
+	time.Sleep(1000 * time.Second)
 	return nil
 }

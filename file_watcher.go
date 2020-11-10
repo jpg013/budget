@@ -7,22 +7,11 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-type fileOP string
-
-const (
-	createFile fileOP = "create"
-)
-
-type fileEvent struct {
-	op   fileOP
-	file string
-}
-
 type FileWatcher struct {
 	watcher *fsnotify.Watcher
 	mu      sync.Mutex
 	Done    chan bool
-	Data    chan *fileEvent
+	Data    chan fsnotify.Event
 }
 
 func (f *FileWatcher) close() error {
@@ -32,7 +21,7 @@ func (f *FileWatcher) close() error {
 	return nil
 }
 
-func (f *FileWatcher) Run(dirs ...string) error {
+func (f *FileWatcher) WatchDirs(dirs ...string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -56,17 +45,7 @@ func (f *FileWatcher) Run(dirs ...string) error {
 				if !ok {
 					return
 				}
-
-				fileEvent := &fileEvent{
-					file: event.Name,
-				}
-
-				if event.Op == fsnotify.Create {
-					fileEvent.op = createFile
-				}
-
-				f.Data <- fileEvent
-
+				f.Data <- event
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
@@ -92,6 +71,6 @@ func NewFileWatcher() *FileWatcher {
 	return &FileWatcher{
 		watcher: nil,
 		Done:    make(chan bool),
-		Data:    make(chan *fileEvent),
+		Data:    make(chan fsnotify.Event),
 	}
 }
