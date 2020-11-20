@@ -1,28 +1,37 @@
 package csv
 
 import (
-	encodingcsv "encoding/csv"
+	"encoding/csv"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"sync"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"gorm.io/gorm"
 )
 
 type Manager struct {
-	fileConfigs []*FileConfiguration
+	fileConfigs []FileConfiguration
+	fileWatcher *fsnotify.Watcher
+	mux         sync.Mutex
 }
 
-func (m *Manager) getConfigForFile(filename string) (*FileConfiguration, error) {
+func (m *Manager) getConfigForFile(filename string) (FileConfiguration, error) {
 	for _, conf := range m.fileConfigs {
 		if conf.FilePattern == "" {
 			continue
 		}
 
 		match, err := regexp.MatchString(conf.FilePattern, filename)
+
 		if err != nil {
-			return nil, err
+			return conf, err
 		}
 
 		if match {
@@ -30,99 +39,142 @@ func (m *Manager) getConfigForFile(filename string) (*FileConfiguration, error) 
 		}
 	}
 
-	return nil, nil
+	return FileConfiguration{}, errors.New("could not find config for file")
 }
 
-func (m *Manager) ParseFile(file string) ([]Record, error) {
-	ext := filepath.Ext(file)
+func (m *Manager) getVal(col ColumnMapping, row RowData) (interface{}, error) {
+	v := row[col.Ordinal-1]
 
-	if ext != ".csv" {
-		return nil, fmt.Errorf("file of type \"%s\" is not a valid CSV", ext)
+	switch col.Type {
+	case Float64Column:
+		return m.parseString(v)
+	case StrColumn:
+		return m.parseString(v)
+	case TimestampColumn:
+		return m.parseTimestamp(v, col.Args)
+	default:
+		return nil, errors.New("invalid column mapping type")
 	}
+}
 
-	fileConfig, err := m.getConfigForFile(file)
+func (m *Manager) parseTimestamp(v interface{}, args JSONB) (t time.Time, err error) {
+	s, err := m.parseString(v)
 
 	if err != nil {
-		return nil, fmt.Errorf("Could not get file configration for file %s: %v", file, err)
+		return t, err
 	}
 
-	// Read file
-	f, err := os.Open(file)
+	// Parse timestamp format from args
+	format, ok := args["timestamp_format"].(string)
+
+	if !ok {
+		format = "2006-01-02"
+	}
+
+	t, err = time.Parse(format, s)
+
+	return t, err
+}
+
+func (m *Manager) parseString(v interface{}) (string, error) {
+	return fmt.Sprintf("%v", v), nil
+}
+
+func (m *Manager) parseFloat(v interface{}) (float64, error) {
+	s, err := m.parseString(v)
 
 	if err != nil {
-		return nil, fmt.Errorf("Unable to read input file %v", err)
+		return 0, err
 	}
 
-	defer f.Close()
+	return strconv.ParseFloat(s, 64)
+}
 
-	csvReader := encodingcsv.NewReader(f)
-	records, err := csvReader.ReadAll()
+func (m *Manager) parseRow(conf FileConfiguration, row RowData) (Record, error) {
+	record := make(map[string]interface{})
 
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse file as CSV input file %v", err)
-	}
-
-	data := make([]Record, len(records)-1)
-
-	for idx, r := range records[1:] {
-		datum, err := fileConfig.ParseRow(r)
+	for _, col := range conf.ColumnMappings {
+		if col.Ordinal-1 > len(record) {
+			return nil, fmt.Errorf("Column mapping ordinal outside record index")
+		}
+		key := col.Name
+		val, err := m.getVal(col, row)
 
 		if err != nil {
-			return nil, fmt.Errorf("Unable to parse file as CSV input file %v", err)
+			return nil, err
 		}
 
-		data[idx] = datum
+		record[key] = val
 	}
 
-	return data, nil
+	return record, nil
 }
 
-type User struct {
-	gorm.Model
-	Username string
-	Orders   []Order
-}
+func (m *Manager) ParseFile(file string) (chan Record, chan error) {
+	// make channels for sending data / errors to consumer
+	outCh := make(chan Record)
+	errCh := make(chan error)
+	var f *os.File
 
-type Order struct {
-	gorm.Model
-	UserID uint
-	Price  float64
+	go func() {
+		ext := filepath.Ext(file)
+
+		defer func() {
+			if f != nil {
+				f.Close()
+			}
+			close(outCh)
+			close(errCh)
+		}()
+
+		if ext != ".csv" {
+			errCh <- fmt.Errorf("file of type \"%s\" is not a valid CSV", ext)
+			return
+		}
+
+		fileConfig, err := m.getConfigForFile(file)
+
+		if err != nil {
+			errCh <- fmt.Errorf("Could not get file configration for file %s: %v", file, err)
+			return
+		}
+
+		// Read file
+		f, err := os.Open(file)
+
+		if err != nil {
+			errCh <- fmt.Errorf("Unable to read input file %v", err)
+			return
+		}
+
+		r := csv.NewReader(f)
+
+		for {
+			record, err := r.Read()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				errCh <- err
+				return
+			}
+			datum, err := m.parseRow(fileConfig, record)
+			if err != nil {
+				errCh <- err
+			} else {
+				outCh <- datum
+			}
+		}
+	}()
+
+	return outCh, errCh
 }
 
 func NewManager(db *gorm.DB) (m *Manager, err error) {
-	// result := db.AutoMigrate(&User{}, &Order{})
+	m = &Manager{}
 
-	// fmt.Println(result)
-
-	// user := User{
-	// 	Username: "Justin",
-	// 	Orders: []Order{
-	// 		Order{
-	// 			Price: 12.42,
-	// 		},
-	// 	},
-	// }
-
-	// result := db.Create(&user)
-	// fmt.Println(result)
-	var user []User
-	result := db.Table("users").Joins("orders").Find(&user, "username='Justin'")
-	fmt.Println(result)
-	fmt.Println(user)
-	os.Exit(0)
-
-	// m = &Manager{}
-	// // Load all csv file configurations
-	// result := db.Joins("ColumnMappings").Find(&m.fileConfigs)
-	// fmt.Println(result)
-	// fmt.Println(m.fileConfigs[0].Name)
-	// panic("no")
-	// if result.Error() != "" {
-	// 	fmt.Println(result.Error())
-	// 	return m, err
-	// }
-	// fmt.Println("Bitch please")
-	// fmt.Println(result)
+	// Load all csv file configurations
+	db.Preload("ColumnMappings").Find(&m.fileConfigs)
 
 	return m, nil
 }

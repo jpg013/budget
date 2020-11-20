@@ -8,12 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/jpg013/budget"
 	"github.com/jpg013/budget/config"
 	"github.com/jpg013/budget/csv"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 func makePostgresDSN(cfg config.Configuration) string {
@@ -33,83 +30,30 @@ func makePostgresDSN(cfg config.Configuration) string {
 	)
 }
 
-func DefineDiscoverAllAvailableCSV(db *gorm.DB) {
-	// config := &csv.FileConfiguration{
-	// 	Name:        "Discover All Available",
-	// 	FilePattern: "Discover-AllAvailable-[0-9]+.csv",
-	// 	ColumnMappings: []*csv.ColumnMapping{
-	// 		&csv.ColumnMapping{
-	// 			Name:    "Transaction Date",
-	// 			Ordinal: 1,
-	// 			Type:    "timestamp",
-	// 			Args:    map[string]interface{}{"timestamp_format": "01-02-2006"},
-	// 		},
-	// 		&csv.ColumnMapping{
-	// 			Name:    "Posted Date",
-	// 			Ordinal: 2,
-	// 			Type:    "timestamp",
-	// 			Args:    map[string]interface{}{"timestamp_format": "01-02-2006"},
-	// 		},
-	// 		&csv.ColumnMapping{
-	// 			Name:    "Description",
-	// 			Ordinal: 3,
-	// 			Type:    "string",
-	// 		},
-	// 		&csv.ColumnMapping{
-	// 			Name:    "Amount",
-	// 			Ordinal: 4,
-	// 			Type:    "float64",
-	// 		},
-	// 		&csv.ColumnMapping{
-	// 			Name:    "Category",
-	// 			Ordinal: 5,
-	// 			Type:    "string",
-	// 		},
-	// 	},
-	// }
-
-	// result := db.Create(&config)
-	// fmt.Println(result)
-}
-
 func Start(cfg config.Configuration) error {
-	dsn := makePostgresDSN(cfg)
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := budget.CreateDB(cfg)
 
 	if err != nil {
 		return err
 	}
 
-	fileWatcher := budget.NewFileWatcher()
-	csvManager, err := csv.NewManager(db)
+	err = csv.Migrate(db)
 
 	if err != nil {
 		return err
 	}
 
-	go func() {
-		err := fileWatcher.WatchDirs("./tmp")
+	pipeline, err := budget.NewActivityPipeline(db)
 
-		if err != nil {
-			panic(err)
-		}
+	if err != nil {
+		return err
+	}
 
-		for {
-			evt := <-fileWatcher.Data
+	err = pipeline.Start()
 
-			if evt.Op == fsnotify.Create {
-				records, err := csvManager.ParseFile(evt.Name)
-
-				if err != nil {
-					fmt.Println(err)
-				} else {
-					fmt.Println(records)
-				}
-			}
-		}
-	}()
-
-	fmt.Println(csvManager)
+	if err != nil {
+		return err
+	}
 
 	time.Sleep(1000 * time.Second)
 	return nil
