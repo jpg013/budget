@@ -6,11 +6,8 @@ import (
 
 	"fmt"
 	"os"
-	"time"
 
-	"github.com/jpg013/budget"
 	"github.com/jpg013/budget/config"
-	"github.com/jpg013/budget/csv"
 )
 
 func makePostgresDSN(cfg config.Configuration) string {
@@ -31,30 +28,27 @@ func makePostgresDSN(cfg config.Configuration) string {
 }
 
 func Start(cfg config.Configuration) error {
-	db, err := budget.CreateDB(cfg)
+	fmt.Println("Hello there")
 
-	if err != nil {
-		return err
-	}
-
-	err = csv.Migrate(db)
-
-	if err != nil {
-		return err
-	}
-
-	pipeline, err := budget.NewActivityPipeline(db)
-
-	if err != nil {
-		return err
-	}
-
-	err = pipeline.Start()
-
-	if err != nil {
-		return err
-	}
-
-	time.Sleep(1000 * time.Second)
 	return nil
+	// db, err := budget.CreateDB(cfg)
+
+	// if err != nil {
+	// 	return err
+	// }
+
+	// processor, err := budget.NewActivityFileProcessor(db)
+
+	// if err != nil {
+	// 	return err
+	// }
+
+	// err = processor.Start()
+
+	// if err != nil {
+	// 	return err
+	// }
+
+	// time.Sleep(1000 * time.Second)
+	// return nil
 }
