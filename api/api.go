@@ -4,10 +4,14 @@ import (
 
 	// Importing go sql driver
 
+	"database/sql"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/jpg013/budget/config"
+	"github.com/jpg013/budget/fileload"
+	_ "github.com/lib/pq"
 )
 
 func makePostgresDSN(cfg config.Configuration) string {
@@ -18,37 +22,22 @@ func makePostgresDSN(cfg config.Configuration) string {
 		pass = "dev"
 	}
 
-	return fmt.Sprintf("user=%s password=%s dbname=%s port=%d sslmode=disable host=%s",
-		cfg.Postgres.Username,
-		pass,
-		cfg.Postgres.Database,
-		cfg.Postgres.Port,
-		cfg.Postgres.Host,
-	)
+	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
+		"password=%s dbname=%s sslmode=disable",
+		cfg.Postgres.Host, cfg.Postgres.Port, cfg.Postgres.Username, pass, cfg.Postgres.Database)
+
+	return psqlInfo
 }
 
 func Start(cfg config.Configuration) error {
-	fmt.Println("Hello there")
+	connStr := makePostgresDSN(cfg)
+	db, err := sql.Open("postgres", connStr)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fileload.NewManager(db)
 
 	return nil
-	// db, err := budget.CreateDB(cfg)
-
-	// if err != nil {
-	// 	return err
-	// }
-
-	// processor, err := budget.NewActivityFileProcessor(db)
-
-	// if err != nil {
-	// 	return err
-	// }
-
-	// err = processor.Start()
-
-	// if err != nil {
-	// 	return err
-	// }
-
-	// time.Sleep(1000 * time.Second)
-	// return nil
 }

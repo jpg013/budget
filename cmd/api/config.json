@@ -3,6 +3,6 @@
     "username": "dev",
     "host": "localhost",
     "port": 5432,
-    "database": "dev"
+    "database": "postgres"
   }
 }
