@@ -1,20 +1,7 @@
 package budget
 
-
-
-
 type CSVFileLoader struct {
-
 }
-
-
-type CSVIngestJob struct {
-}
-
-type CSVIngestConfig {
-	Name
-}
-
 
 // job_name: Discover All Activity
 // file_patten: Discover-AllAvailable-[0-9]+.csv

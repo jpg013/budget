@@ -9,39 +9,12 @@ import (
 )
 
 type CSVFileGenerator struct {
-	fileDefinitions []CSVFileDefinition
-	inputDir        string
-	fileWatcher     *fsnotify.Watcher
+	inputDir    string
+	fileWatcher *fsnotify.Watcher
 }
 
 type CSVFileGeneratorConfig struct {
-	fileDefinitions []CSVFileDefinition
-	inputDir        string
-}
-
-type JSONB map[string]interface{}
-
-type CSVColumnType string
-
-const (
-	CSVIntColumn       CSVColumnType = "int"
-	CSVFloat64Column                 = "float64"
-	CSVStrColumn                     = "string"
-	CSVTimestampColumn               = "timestamp"
-)
-
-type CSVFileDefinition struct {
-	Name        string
-	FilePattern string
-	Columns     []CSVColumn
-}
-
-type CSVColumn struct {
-	Name    string        `json:"name"`
-	Key     string        `json:"key"`
-	Ordinal int           `json:"ordinal"`
-	Type    CSVColumnType `json:"type"`
-	Args    JSONB         `json:"args"`
+	inputDir string
 }
 
 func (gen *CSVFileGenerator) Next() (Chunk, error) {
@@ -56,9 +29,8 @@ func NewCSVFileGenerator(conf CSVFileGeneratorConfig) (Generator, error) {
 	}
 
 	gen := &CSVFileGenerator{
-		fileDefinitions: conf.fileDefinitions,
-		inputDir:        conf.inputDir,
-		fileWatcher:     fw,
+		inputDir:    conf.inputDir,
+		fileWatcher: fw,
 	}
 	// Call start on generator
 	gen.startGenerator()
@@ -80,9 +52,7 @@ func (gen *CSVFileGenerator) startGenerator() error {
 				if event.Op != fsnotify.Create {
 					continue
 				}
-				if filepath.Ext(event.Name) == ".csv" {
-					fmt.Println(event.Name)
-				}
+				go gen.processFile(event.Name)
 			case err, ok := <-gen.fileWatcher.Errors:
 				if !ok {
 					return
@@ -96,81 +66,61 @@ func (gen *CSVFileGenerator) startGenerator() error {
 	return gen.fileWatcher.Add(gen.inputDir)
 }
 
-type parseableJobDefinition struct {
-	Name        string `json:"name"`
-	FilePattern string `json:"file_pattern"`
-	Columns     []parseableCSVColumn
-}
+func (get *CSVFileGenerator) processFile(fileName string) {
+		ext := filepath.Ext(fileName)
 
-type parseableCSVColumn struct {
-	Name    string `json:"name"`
-	Key     string `json:"key"`
-	Ordinal int    `json:"ordinal"`
-	Type    string `json:"type"`
-	Args    JSONB  `json:"args"`
-}
-
-func (p *parseableCSVColumn) normalize() (c CSVColumn, err error) {
-	ct, err := parseColumnType(p.Type)
-
-	if err != nil {
-		return
-	}
-
-	return CSVColumn{
-		Name:    p.Name,
-		Key:     p.Key,
-		Ordinal: p.Ordinal,
-		Type:    ct,
-		Args:    p.Args,
-	}, err
-}
-
-func (p *parseableJobDefinition) normalize() (def JobDefinition, err error) {
-	jt, err := parseJobtype(p.Type)
-
-	if err != nil {
-		return
-	}
-
-	cols := make([]CSVColumn, len(p.Columns))
-
-	for idx, c := range p.Columns {
-		col, err := c.normalize()
-		if err != nil {
-			return def, err
+		if ext != ".csv" {
+			return
 		}
-		cols[idx] = col
-	}
 
-	return JobDefinition{
-		Name:        p.Name,
-		Type:        jt,
-		FilePattern: p.FilePattern,
-		Columns:     cols,
-	}, err
-}
+		defer func() {
+			if f != nil {
+				f.Close()
+			}
+			close(outCh)
+			close(errCh)
+		}()
 
-func parseColumnType(s string) (ColumnType, error) {
-	switch s {
-	case "int":
-		return IntColumn, nil
-	case "float64":
-		return Float64Column, nil
-	case "string":
-		return StrColumn, nil
-	case "timestamp":
-		return TimestampColumn, nil
-	default:
-		return "", fmt.Errorf("invalid column type \"%s\"", s)
-	}
-}
+		if ext != ".csv" {
+			errCh <- fmt.Errorf("file of type \"%s\" is not a valid CSV", ext)
+			return
+		}
 
-func parseJobtype(s string) (JobType, error) {
-	switch s {
-	case "csv_file_load":
-		return CSVFileLoad, nil
-	default:
-		return "", fmt.Errorf("invalid job type \"%s\"", s)
-	}
+		// Read file
+		f, err := os.Open(fileName)
+
+		if err != nil {
+			errCh <- fmt.Errorf("Unable to read input file %v", err)
+			return
+		}
+
+		r := csv.NewReader(f)
+		codes := make(map[string]int)
+		// for {
+		// 	record, err := r.Read()
+		// 	if err == io.EOF {
+		// 		return
+		// 	}
+		// 	if err != nil {
+		// 		errCh <- err
+		// 		return
+		// 	}
+		// 	datum, err := m.parseRow(config, record)
+		// 	if err != nil {
+		// 		errCh <- err
+		// 	} else {
+		// 		code := fmt.Sprintf("%s", datum["code"])
+		// 		val, ok := codes[code]
+		// 		val++
+		// 		if !ok {
+		// 			codes[code] = val
+		// 		}
+		// 		code = fmt.Sprintf("%s:%d", code, val)
+		// 		datum["code"] = code
+		// 		outCh <- datum
+		// 	}
+		// }
+	}()
+
+	return outCh, errCh
 }
