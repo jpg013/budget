@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"github.com/jpg013/budget/config"
-	"github.com/jpg013/budget/fileload"
+	"github.com/jpg013/budget/csvload"
 	_ "github.com/lib/pq"
 )
 
@@ -37,7 +37,9 @@ func Start(cfg config.Configuration) error {
 		log.Fatal(err)
 	}
 
-	fileload.NewManager(db)
+	csvLoader, err := csvload.NewLoader(db)
+
+	fmt.Println(csvLoader)
 
 	return nil
 }
